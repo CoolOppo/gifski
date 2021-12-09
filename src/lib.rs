@@ -39,10 +39,10 @@ mod encoderust;
 mod encodegifsicle;
 
 use crossbeam_channel::{Receiver, Sender};
+use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::thread;
-use std::borrow::Cow;
 
 type DecodedImage = CatResult<(ImgVec<RGBA8>, f64)>;
 
@@ -88,7 +88,8 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            width: None, height: None,
+            width: None,
+            height: None,
             quality: 100,
             fast: false,
             repeat: Repeat::Infinite,
@@ -192,12 +193,34 @@ impl Collector {
     /// Presentation timestamp is time in seconds (since file start at 0) when this frame is to be displayed.
     ///
     /// If the first frame doesn't start at pts=0, the delay will be used for the last frame.
-    pub fn add_frame_rgba(&mut self, frame_index: usize, image: ImgVec<RGBA8>, presentation_timestamp: f64) -> CatResult<()> {
-        self.queue.push(frame_index, Ok((Self::resized_binary_alpha(image.into(), self.width, self.height)?, presentation_timestamp)))
+    pub fn add_frame_rgba(
+        &mut self,
+        frame_index: usize,
+        image: ImgVec<RGBA8>,
+        presentation_timestamp: f64,
+    ) -> CatResult<()> {
+        self.queue.push(
+            frame_index,
+            Ok((
+                Self::resized_binary_alpha(image.into(), self.width, self.height)?,
+                presentation_timestamp,
+            )),
+        )
     }
 
-    pub(crate) fn add_frame_rgba_cow(&mut self, frame_index: usize, image: Img<Cow<[RGBA8]>>, presentation_timestamp: f64) -> CatResult<()> {
-        self.queue.push(frame_index, Ok((Self::resized_binary_alpha(image, self.width, self.height)?, presentation_timestamp)))
+    pub(crate) fn add_frame_rgba_cow(
+        &mut self,
+        frame_index: usize,
+        image: Img<Cow<[RGBA8]>>,
+        presentation_timestamp: f64,
+    ) -> CatResult<()> {
+        self.queue.push(
+            frame_index,
+            Ok((
+                Self::resized_binary_alpha(image, self.width, self.height)?,
+                presentation_timestamp,
+            )),
+        )
     }
 
     /// Read and decode a PNG file from disk.
@@ -207,27 +230,50 @@ impl Collector {
     /// Presentation timestamp is time in seconds (since file start at 0) when this frame is to be displayed.
     ///
     /// If the first frame doesn't start at pts=0, the delay will be used for the last frame.
-    pub fn add_frame_png_file(&mut self, frame_index: usize, path: PathBuf, presentation_timestamp: f64) -> CatResult<()> {
+    pub fn add_frame_png_file(
+        &mut self,
+        frame_index: usize,
+        path: PathBuf,
+        presentation_timestamp: f64,
+    ) -> CatResult<()> {
         let width = self.width;
         let height = self.height;
         let image = lodepng::decode32_file(&path)
             .map_err(|err| Error::PNG(format!("Can't load {}: {}", path.display(), err)))?;
 
         let image = Img::new(image.buffer.into(), image.width, image.height);
-        self.queue.push(frame_index, Ok((Self::resized_binary_alpha(image, width, height)?, presentation_timestamp)))
+        self.queue.push(
+            frame_index,
+            Ok((
+                Self::resized_binary_alpha(image, width, height)?,
+                presentation_timestamp,
+            )),
+        )
     }
 
     #[allow(clippy::identity_op)]
     #[allow(clippy::erasing_op)]
-    fn resized_binary_alpha(image: Img<Cow<[RGBA8]>>, width: Option<u32>, height: Option<u32>) -> CatResult<ImgVec<RGBA8>> {
-        let (width, height) = dimensions_for_image((image.width(), image.height()), (width, height));
+    fn resized_binary_alpha(
+        image: Img<Cow<[RGBA8]>>,
+        width: Option<u32>,
+        height: Option<u32>,
+    ) -> CatResult<ImgVec<RGBA8>> {
+        let (width, height) =
+            dimensions_for_image((image.width(), image.height()), (width, height));
 
         let mut image = if width != image.width() || height != image.height() {
             let tmp = image.as_ref();
             let (buf, img_width, img_height) = tmp.to_contiguous_buf();
             assert_eq!(buf.len(), img_width * img_height);
 
-            let mut r = resize::new(img_width, img_height, width, height, resize::Pixel::RGBA8P, resize::Type::Lanczos3)?;
+            let mut r = resize::new(
+                img_width,
+                img_height,
+                width,
+                height,
+                resize::Pixel::RGBA8P,
+                resize::Type::Lanczos3,
+            )?;
             let mut dst = vec![RGBA8::new(0, 0, 0, 0); width * height];
             r.resize(&buf, &mut dst)?;
             ImgVec::new(dst, width, height)
@@ -236,20 +282,81 @@ impl Collector {
         };
 
         const DITHER: [u8; 64] = [
-         0*2+8,48*2+8,12*2+8,60*2+8, 3*2+8,51*2+8,15*2+8,63*2+8,
-        32*2+8,16*2+8,44*2+8,28*2+8,35*2+8,19*2+8,47*2+8,31*2+8,
-         8*2+8,56*2+8, 4*2+8,52*2+8,11*2+8,59*2+8, 7*2+8,55*2+8,
-        40*2+8,24*2+8,36*2+8,20*2+8,43*2+8,27*2+8,39*2+8,23*2+8,
-         2*2+8,50*2+8,14*2+8,62*2+8, 1*2+8,49*2+8,13*2+8,61*2+8,
-        34*2+8,18*2+8,46*2+8,30*2+8,33*2+8,17*2+8,45*2+8,29*2+8,
-        10*2+8,58*2+8, 6*2+8,54*2+8, 9*2+8,57*2+8, 5*2+8,53*2+8,
-        42*2+8,26*2+8,38*2+8,22*2+8,41*2+8,25*2+8,37*2+8,21*2+8];
+            0 * 2 + 8,
+            48 * 2 + 8,
+            12 * 2 + 8,
+            60 * 2 + 8,
+            3 * 2 + 8,
+            51 * 2 + 8,
+            15 * 2 + 8,
+            63 * 2 + 8,
+            32 * 2 + 8,
+            16 * 2 + 8,
+            44 * 2 + 8,
+            28 * 2 + 8,
+            35 * 2 + 8,
+            19 * 2 + 8,
+            47 * 2 + 8,
+            31 * 2 + 8,
+            8 * 2 + 8,
+            56 * 2 + 8,
+            4 * 2 + 8,
+            52 * 2 + 8,
+            11 * 2 + 8,
+            59 * 2 + 8,
+            7 * 2 + 8,
+            55 * 2 + 8,
+            40 * 2 + 8,
+            24 * 2 + 8,
+            36 * 2 + 8,
+            20 * 2 + 8,
+            43 * 2 + 8,
+            27 * 2 + 8,
+            39 * 2 + 8,
+            23 * 2 + 8,
+            2 * 2 + 8,
+            50 * 2 + 8,
+            14 * 2 + 8,
+            62 * 2 + 8,
+            1 * 2 + 8,
+            49 * 2 + 8,
+            13 * 2 + 8,
+            61 * 2 + 8,
+            34 * 2 + 8,
+            18 * 2 + 8,
+            46 * 2 + 8,
+            30 * 2 + 8,
+            33 * 2 + 8,
+            17 * 2 + 8,
+            45 * 2 + 8,
+            29 * 2 + 8,
+            10 * 2 + 8,
+            58 * 2 + 8,
+            6 * 2 + 8,
+            54 * 2 + 8,
+            9 * 2 + 8,
+            57 * 2 + 8,
+            5 * 2 + 8,
+            53 * 2 + 8,
+            42 * 2 + 8,
+            26 * 2 + 8,
+            38 * 2 + 8,
+            22 * 2 + 8,
+            41 * 2 + 8,
+            25 * 2 + 8,
+            37 * 2 + 8,
+            21 * 2 + 8,
+        ];
 
         // Make transparency binary
         for (y, row) in image.rows_mut().enumerate() {
             for (x, px) in row.iter_mut().enumerate() {
                 if px.a < 255 {
-                    px.a = if px.a < DITHER[(y & 7) * 8 + (x & 7)] { 0 } else { 255 };
+                    px.a = if px.a < DITHER[(y & 7) * 8 + (x & 7)] {
+                        0
+                    } else {
+                        255
+                    };
                 }
             }
         }
@@ -259,19 +366,25 @@ impl Collector {
 
 /// add_frame is going to resize the image to this size.
 /// The `Option` args are user-specified max width and max height
-fn dimensions_for_image((img_w, img_h): (usize, usize), resize_to: (Option<u32>, Option<u32>)) -> (usize, usize) {
+fn dimensions_for_image(
+    (img_w, img_h): (usize, usize),
+    resize_to: (Option<u32>, Option<u32>),
+) -> (usize, usize) {
     match resize_to {
         (None, None) => {
-            let factor = (img_w * img_h + 800 * 600) / (800 * 600);
-            if factor > 1 {
-                (img_w / factor, img_h / factor)
+            let mut factor = 1.0;
+            if img_w > img_h && img_w > 1000 {
+                factor = img_w as f64 / 1000.0;
+            } else if img_h > img_w && img_h > 1000{
+                factor = img_h as f64 / 1000.0;
+            }
+            if factor > 1.0 {
+                ((img_w as f64 / factor).floor() as usize, (img_h as f64 / factor).floor() as usize)
             } else {
                 (img_w, img_h)
             }
-        },
-        (Some(w), Some(h)) => {
-            ((w as usize).min(img_w), (h as usize).min(img_h))
-        },
+        }
+        (Some(w), Some(h)) => ((w as usize).min(img_w), (h as usize).min(img_h)),
         (Some(w), None) => {
             let w = (w as usize).min(img_w);
             (w, img_h * w / img_w)
@@ -279,7 +392,7 @@ fn dimensions_for_image((img_w, img_h): (usize, usize), resize_to: (Option<u32>,
         (None, Some(h)) => {
             let h = (h as usize).min(img_h);
             (img_w * h / img_h, h)
-        },
+        }
     }
 }
 
@@ -290,7 +403,12 @@ impl Writer {
     /// Avoids wasting palette on pixels identical to the background.
     ///
     /// `background` is the previous frame.
-    fn quantize(image: ImgRef<'_, RGBA8>, importance_map: &[u8], has_prev_frame: bool, settings: &Settings) -> CatResult<(Attributes, QuantizationResult, Image<'static>)> {
+    fn quantize(
+        image: ImgRef<'_, RGBA8>,
+        importance_map: &[u8],
+        has_prev_frame: bool,
+        settings: &Settings,
+    ) -> CatResult<(Attributes, QuantizationResult, Image<'static>)> {
         let mut liq = Attributes::new();
         if settings.fast {
             liq.set_speed(10);
@@ -301,7 +419,13 @@ impl Writer {
             100 // the first frame is too important to ruin it
         };
         liq.set_quality(0, quality);
-        let mut img = liq.new_image_stride_copy(image.buf(), image.width(), image.height(), image.stride(), 0.)?;
+        let mut img = liq.new_image_stride_copy(
+            image.buf(),
+            image.width(),
+            image.height(),
+            image.stride(),
+            0.,
+        )?;
         img.set_importance_map(importance_map)?;
         if has_prev_frame {
             img.add_fixed_color(RGBA8::new(0, 0, 0, 0));
@@ -310,9 +434,21 @@ impl Writer {
         Ok((liq, res, img))
     }
 
-    fn remap(liq: Attributes, mut res: QuantizationResult, mut img: Image<'static>, background: Option<ImgRef<'_, RGBA8>>, settings: &Settings) -> CatResult<(ImgVec<u8>, Vec<RGBA8>)> {
+    fn remap(
+        liq: Attributes,
+        mut res: QuantizationResult,
+        mut img: Image<'static>,
+        background: Option<ImgRef<'_, RGBA8>>,
+        settings: &Settings,
+    ) -> CatResult<(ImgVec<u8>, Vec<RGBA8>)> {
         if let Some(bg) = background {
-            img.set_background(liq.new_image_stride(bg.buf(), bg.width(), bg.height(), bg.stride(), 0.)?)?;
+            img.set_background(liq.new_image_stride(
+                bg.buf(),
+                bg.width(),
+                bg.height(),
+                bg.stride(),
+                0.,
+            )?)?;
         }
 
         res.set_dithering_level((settings.quality as f32 / 50.0 - 1.).max(0.));
@@ -323,11 +459,22 @@ impl Writer {
         Ok((Img::new(pal_img, img.width(), img.height()), pal))
     }
 
-    fn write_frames(write_queue: Receiver<FrameMessage>, enc: &mut dyn Encoder, settings: &Settings, reporter: &mut dyn ProgressReporter) -> CatResult<()> {
+    fn write_frames(
+        write_queue: Receiver<FrameMessage>,
+        enc: &mut dyn Encoder,
+        settings: &Settings,
+        reporter: &mut dyn ProgressReporter,
+    ) -> CatResult<()> {
         let mut pts_in_delay_units = 0_u64;
 
         let mut n_done = 0;
-        for FrameMessage {frame, ordinal_frame_number, end_pts, ..} in write_queue {
+        for FrameMessage {
+            frame,
+            ordinal_frame_number,
+            end_pts,
+            ..
+        } in write_queue
+        {
             let delay = ((end_pts * 100.0).round() as u64)
                 .saturating_sub(pts_in_delay_units)
                 .min(30000) as u16;
@@ -361,34 +508,42 @@ impl Writer {
     ///
     /// `ProgressReporter.increase()` is called each time a new frame is being written.
     #[allow(unused_mut)]
-    pub fn write<W: Write>(self, mut writer: W, reporter: &mut dyn ProgressReporter) -> CatResult<()> {
-
+    pub fn write<W: Write>(
+        self,
+        mut writer: W,
+        reporter: &mut dyn ProgressReporter,
+    ) -> CatResult<()> {
         #[cfg(feature = "gifsicle")]
         {
             if self.settings.quality < 100 {
-                let mut gifsicle = encodegifsicle::Gifsicle::new(self.settings.gifsicle_loss(), &mut writer);
+                let mut gifsicle =
+                    encodegifsicle::Gifsicle::new(self.settings.gifsicle_loss(), &mut writer);
                 return self.write_with_encoder(&mut gifsicle, reporter);
             }
         }
         self.write_with_encoder(&mut encoderust::RustEncoder::new(writer), reporter)
     }
 
-    fn write_with_encoder(mut self, encoder: &mut dyn Encoder, reporter: &mut dyn ProgressReporter) -> CatResult<()> {
+    fn write_with_encoder(
+        mut self,
+        encoder: &mut dyn Encoder,
+        reporter: &mut dyn ProgressReporter,
+    ) -> CatResult<()> {
         let decode_queue_recv = self.queue_iter.take().ok_or(Error::Aborted)?;
 
         let settings = self.settings;
         let (quant_queue, quant_queue_recv) = crossbeam_channel::bounded(4);
-        let diff_thread = thread::Builder::new().name("diff".into()).spawn(move || {
-            Self::make_diffs(decode_queue_recv, quant_queue, &settings)
-        })?;
+        let diff_thread = thread::Builder::new()
+            .name("diff".into())
+            .spawn(move || Self::make_diffs(decode_queue_recv, quant_queue, &settings))?;
         let (remap_queue, remap_queue_recv) = crossbeam_channel::bounded(8);
-        let quant_thread = thread::Builder::new().name("quant".into()).spawn(move || {
-            Self::quantize_frames(quant_queue_recv, remap_queue, &settings)
-        })?;
+        let quant_thread = thread::Builder::new()
+            .name("quant".into())
+            .spawn(move || Self::quantize_frames(quant_queue_recv, remap_queue, &settings))?;
         let (write_queue, write_queue_recv) = crossbeam_channel::bounded(6);
-        let remap_thread = thread::Builder::new().name("remap".into()).spawn(move || {
-            Self::remap_frames(remap_queue_recv, write_queue, &settings)
-        })?;
+        let remap_thread = thread::Builder::new()
+            .name("remap".into())
+            .spawn(move || Self::remap_frames(remap_queue_recv, write_queue, &settings))?;
         Self::write_frames(write_queue_recv, encoder, &self.settings, reporter)?;
         diff_thread.join().map_err(|_| Error::ThreadSend)??;
         quant_thread.join().map_err(|_| Error::ThreadSend)??;
@@ -396,11 +551,16 @@ impl Writer {
         Ok(())
     }
 
-    fn make_diffs(mut inputs: OrdQueueIter<DecodedImage>, quant_queue: Sender<DiffMessage>, settings: &Settings) -> CatResult<()> {
+    fn make_diffs(
+        mut inputs: OrdQueueIter<DecodedImage>,
+        quant_queue: Sender<DiffMessage>,
+        settings: &Settings,
+    ) -> CatResult<()> {
         let (first_frame, first_frame_pts) = inputs.next().transpose()?.ok_or(Error::NoFrames)?;
         let mut prev_frame_pts = -1.0;
 
-        let mut denoiser = Denoiser::new(first_frame.width(), first_frame.height(), settings.quality);
+        let mut denoiser =
+            Denoiser::new(first_frame.width(), first_frame.height(), settings.quality);
 
         let first_frame_has_transparency = first_frame.pixels().any(|px| px.a < 128);
 
@@ -425,8 +585,14 @@ impl Writer {
 
                 let dispose = if let Some((next, _)) = &next_frame {
                     if next.width() != image.width() || next.height() != image.height() {
-                        return Err(Error::WrongSize(format!("Frame {} has wrong size ({}×{}, expected {}×{})", ordinal_frame_number,
-                            next.width(), next.height(), image.width(), image.height())));
+                        return Err(Error::WrongSize(format!(
+                            "Frame {} has wrong size ({}×{}, expected {}×{})",
+                            ordinal_frame_number,
+                            next.width(),
+                            next.height(),
+                            image.width(),
+                            image.height()
+                        )));
                     }
 
                     // Skip identical frames
@@ -436,19 +602,21 @@ impl Writer {
                     }
 
                     // If the next frame becomes transparent, this frame has to clear to bg for it
-                    if next.pixels().zip(image.pixels()).any(|(next, curr)| next.a < curr.a) {
+                    if next
+                        .pixels()
+                        .zip(image.pixels())
+                        .any(|(next, curr)| next.a < curr.a)
+                    {
                         gif::DisposalMethod::Background
                     } else {
                         gif::DisposalMethod::Keep
                     }
+                } else if first_frame_has_transparency {
+                    // Last frame should reset to background to avoid breaking transparent looped anims
+                    gif::DisposalMethod::Background
                 } else {
-                    if first_frame_has_transparency {
-                        // Last frame should reset to background to avoid breaking transparent looped anims
-                        gif::DisposalMethod::Background
-                    } else {
-                        // macOS preview gets Background wrong
-                        gif::DisposalMethod::Keep
-                    }
+                    // macOS preview gets Background wrong
+                    gif::DisposalMethod::Keep
                 };
 
                 // conversion from pts to delay
@@ -473,14 +641,19 @@ impl Writer {
 
             ////////////////////// Consume denoised frames /////////////////////
 
-            let (importance_map, image, (ordinal_frame_number, end_pts, dispose)) = match denoiser.pop() {
-                Denoised::Done => {
-                    debug_assert!(next_frame.is_none());
-                    break
-                },
-                Denoised::NotYet => continue,
-                Denoised::Frame { importance_map, frame, meta } => ( importance_map, frame, meta ),
-            };
+            let (importance_map, image, (ordinal_frame_number, end_pts, dispose)) =
+                match denoiser.pop() {
+                    Denoised::Done => {
+                        debug_assert!(next_frame.is_none());
+                        break;
+                    }
+                    Denoised::NotYet => continue,
+                    Denoised::Frame {
+                        importance_map,
+                        frame,
+                        meta,
+                    } => (importance_map, frame, meta),
+                };
 
             let (importance_map, ..) = importance_map.into_contiguous_buf();
 
@@ -496,22 +669,44 @@ impl Writer {
         Ok(())
     }
 
-    fn quantize_frames(inputs: Receiver<DiffMessage>, remap_queue: Sender<RemapMessage>, settings: &Settings) -> CatResult<()> {
+    fn quantize_frames(
+        inputs: Receiver<DiffMessage>,
+        remap_queue: Sender<RemapMessage>,
+        settings: &Settings,
+    ) -> CatResult<()> {
         let mut prev_frame_keeps = false;
         let mut consecutive_frame_num = 0;
-        while let Some(DiffMessage {mut image, end_pts, dispose, ordinal_frame_number, mut importance_map}) = inputs.recv().ok() {
+        while let Some(DiffMessage {
+            mut image,
+            end_pts,
+            dispose,
+            ordinal_frame_number,
+            mut importance_map,
+        }) = inputs.recv().ok()
+        {
             if !prev_frame_keeps || importance_map.iter().any(|&px| px > 0) {
-
                 if prev_frame_keeps {
                     // if denoiser says the background didn't change, then believe it
                     // (except higher quality settings, which try to improve it every time)
                     let bg_keep_likelyhood = (settings.quality.saturating_sub(80) / 4) as u32;
-                    if settings.fast || (settings.quality < 100 && (consecutive_frame_num % 5) >= bg_keep_likelyhood) {
-                        image.pixels_mut().zip(&importance_map).filter(|&(_, &m)| m == 0).for_each(|(px, _)| *px = RGBA8::new(0,0,0,0));
+                    if settings.fast
+                        || (settings.quality < 100
+                            && (consecutive_frame_num % 5) >= bg_keep_likelyhood)
+                    {
+                        image
+                            .pixels_mut()
+                            .zip(&importance_map)
+                            .filter(|&(_, &m)| m == 0)
+                            .for_each(|(px, _)| *px = RGBA8::new(0, 0, 0, 0));
                     }
                 }
 
-                let (liq, remap, liq_image) = Self::quantize(image.as_ref(), &importance_map, ordinal_frame_number > 1, settings)?;
+                let (liq, remap, liq_image) = Self::quantize(
+                    image.as_ref(),
+                    &importance_map,
+                    ordinal_frame_number > 1,
+                    settings,
+                )?;
                 let max_loss = settings.gifsicle_loss();
                 for imp in &mut importance_map {
                     // encoding assumes rgba background looks like encoded background, which is not true for lossy
@@ -521,7 +716,8 @@ impl Writer {
                     ordinal_frame_number,
                     end_pts,
                     dispose,
-                    liq, remap,
+                    liq,
+                    remap,
                     liq_image,
                 })?;
                 consecutive_frame_num += 1;
@@ -531,14 +727,30 @@ impl Writer {
         Ok(())
     }
 
-    fn remap_frames(inputs: Receiver<RemapMessage>, write_queue: Sender<FrameMessage>, settings: &Settings) -> CatResult<()> {
+    fn remap_frames(
+        inputs: Receiver<RemapMessage>,
+        write_queue: Sender<FrameMessage>,
+        settings: &Settings,
+    ) -> CatResult<()> {
         let next_frame = inputs.recv().map_err(|_| Error::NoFrames)?;
-        let mut screen = gif_dispose::Screen::new(next_frame.liq_image.width(), next_frame.liq_image.height(), RGBA8::new(0, 0, 0, 0), None);
+        let mut screen = gif_dispose::Screen::new(
+            next_frame.liq_image.width(),
+            next_frame.liq_image.height(),
+            RGBA8::new(0, 0, 0, 0),
+            None,
+        );
 
         let mut next_frame = Some(next_frame);
 
         let mut first_frame = true;
-        while let Some(RemapMessage {ordinal_frame_number, end_pts, dispose, liq, remap, liq_image}) = {
+        while let Some(RemapMessage {
+            ordinal_frame_number,
+            end_pts,
+            dispose,
+            liq,
+            remap,
+            liq_image,
+        }) = {
             // that's not the while loop, that block gets the next element
             let curr_frame = next_frame.take();
             next_frame = inputs.recv().ok();
@@ -549,7 +761,11 @@ impl Writer {
             let mut screen_after_dispose = screen.dispose();
 
             let (mut image8, mut image8_pal) = {
-                let bg = if !first_frame { Some(screen_after_dispose.pixels()) } else { None };
+                let bg = if !first_frame {
+                    Some(screen_after_dispose.pixels())
+                } else {
+                    None
+                };
                 Self::remap(liq, remap, liq_image, bg, settings)?
             };
 
@@ -560,7 +776,10 @@ impl Writer {
                     p.a = 0;
                     let new_index = i as u8;
                     if let Some(old_index) = transparent_index {
-                        image8.pixels_mut().filter(|px| **px == new_index).for_each(|px| *px = old_index);
+                        image8
+                            .pixels_mut()
+                            .filter(|px| **px == new_index)
+                            .for_each(|px| *px = old_index);
                     } else {
                         transparent_index = Some(new_index);
                     }
@@ -569,11 +788,18 @@ impl Writer {
 
             // Check that palette is fine and has no duplicate transparent indices
             debug_assert!(image8_pal.iter().enumerate().all(|(idx, color)| {
-                Some(idx as u8) == transparent_index || color.a > 128 || !image8.pixels().any(|px| px == idx as u8)
+                Some(idx as u8) == transparent_index
+                    || color.a > 128
+                    || !image8.pixels().any(|px| px == idx as u8)
             }));
 
             let (left, top, image8) = if !first_frame && next_frame.is_some() {
-                match trim_image(image8, &image8_pal, transparent_index, screen_after_dispose.pixels()) {
+                match trim_image(
+                    image8,
+                    &image8_pal,
+                    transparent_index,
+                    screen_after_dispose.pixels(),
+                ) {
                     Some(trimmed) => trimmed,
                     None => continue, // no pixels left
                 }
@@ -582,7 +808,14 @@ impl Writer {
                 (0, 0, image8)
             };
 
-            screen_after_dispose.then_blit(Some(&image8_pal), dispose, left, top as _, image8.as_ref(), transparent_index)?;
+            screen_after_dispose.then_blit(
+                Some(&image8_pal),
+                dispose,
+                left,
+                top as _,
+                image8.as_ref(),
+                transparent_index,
+            )?;
 
             let frame = GIFFrame {
                 left,
@@ -607,12 +840,23 @@ impl Writer {
     }
 }
 
-fn trim_image(mut image8: ImgVec<u8>, image8_pal: &[RGBA8], transparent_index: Option<u8>, screen: ImgRef<RGBA8>) -> Option<(u16, u16, ImgVec<u8>)> {
+fn trim_image(
+    mut image8: ImgVec<u8>,
+    image8_pal: &[RGBA8],
+    transparent_index: Option<u8>,
+    screen: ImgRef<RGBA8>,
+) -> Option<(u16, u16, ImgVec<u8>)> {
     let mut image_trimmed = image8.as_ref();
 
-    let bottom = image_trimmed.rows().zip(screen.rows()).rev()
+    let bottom = image_trimmed
+        .rows()
+        .zip(screen.rows())
+        .rev()
         .take_while(|(img_row, screen_row)| {
-            img_row.iter().copied().zip(screen_row.iter().copied())
+            img_row
+                .iter()
+                .copied()
+                .zip(screen_row.iter().copied())
                 .all(|(px, bg)| {
                     Some(px) == transparent_index || image8_pal.get(px as usize) == Some(&bg)
                 })
@@ -623,12 +867,18 @@ fn trim_image(mut image8: ImgVec<u8>, image8_pal: &[RGBA8], transparent_index: O
         if bottom == image_trimmed.height() {
             return None;
         }
-        image_trimmed = image_trimmed.sub_image(0, 0, image_trimmed.width(), image_trimmed.height() - bottom);
+        image_trimmed =
+            image_trimmed.sub_image(0, 0, image_trimmed.width(), image_trimmed.height() - bottom);
     }
 
-    let top = image_trimmed.rows().zip(screen.rows())
+    let top = image_trimmed
+        .rows()
+        .zip(screen.rows())
         .take_while(|(img_row, screen_row)| {
-            img_row.iter().copied().zip(screen_row.iter().copied())
+            img_row
+                .iter()
+                .copied()
+                .zip(screen_row.iter().copied())
                 .all(|(px, bg)| {
                     Some(px) == transparent_index || image8_pal.get(px as usize) == Some(&bg)
                 })
@@ -636,7 +886,8 @@ fn trim_image(mut image8: ImgVec<u8>, image8_pal: &[RGBA8], transparent_index: O
         .count();
 
     if top > 0 {
-        image_trimmed = image_trimmed.sub_image(0, top, image_trimmed.width(), image_trimmed.height() - top);
+        image_trimmed =
+            image_trimmed.sub_image(0, top, image_trimmed.width(), image_trimmed.height() - top);
     }
 
     if image_trimmed.height() != image8.height() {
